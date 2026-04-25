@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { Users, ListChecks, Inbox, Activity, Clock, ShieldAlert } from "lucide-react";
+import { Users, ListChecks, Inbox, Activity, Clock, ShieldAlert, ShieldCheck } from "lucide-react";
 
 type Stats = {
   users: number;
@@ -11,6 +11,7 @@ type Stats = {
   pending: number;
   daily: number;
   weekly: number;
+  plagiarism: number;
 };
 
 function StatCard({ icon: Icon, label, value, hint }: { icon: typeof Users; label: string; value: number | string; hint?: string }) {
@@ -37,13 +38,14 @@ export default function AdminDashboard() {
     (async () => {
       const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
       const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-      const [u, p, s, pend, d, w] = await Promise.all([
+      const [u, p, s, pend, d, w, pl] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("problems").select("id", { count: "exact", head: true }),
         supabase.from("submissions").select("id", { count: "exact", head: true }),
         supabase.from("problems").select("id", { count: "exact", head: true }).eq("status", "pending"),
         supabase.from("submissions").select("user_id", { count: "exact", head: true }).gte("created_at", dayAgo),
         supabase.from("submissions").select("user_id", { count: "exact", head: true }).gte("created_at", weekAgo),
+        supabase.from("plagiarism_reports").select("id", { count: "exact", head: true }).eq("status", "pending"),
       ]);
       setStats({
         users: u.count || 0,
@@ -52,6 +54,7 @@ export default function AdminDashboard() {
         pending: pend.count || 0,
         daily: d.count || 0,
         weekly: w.count || 0,
+        plagiarism: pl.count || 0,
       });
     })();
   }, []);
@@ -74,6 +77,7 @@ export default function AdminDashboard() {
           <StatCard icon={ShieldAlert} label="Pending Approval" value={stats.pending} hint="Problems awaiting review" />
           <StatCard icon={Activity} label="Active (24h)" value={stats.daily} hint="Submissions in last 24 hours" />
           <StatCard icon={Clock} label="Active (7d)" value={stats.weekly} hint="Submissions in last 7 days" />
+          <StatCard icon={ShieldCheck} label="Plagiarism Flags" value={stats.plagiarism} hint="Pending plagiarism review" />
         </div>
       )}
     </div>

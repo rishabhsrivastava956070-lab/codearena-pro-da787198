@@ -10,6 +10,90 @@ const LANG_ID: Record<string, number> = { cpp: 54, java: 62, python: 71, javascr
 
 type SubmitBody = { problem_id: string; language: string; code: string; mode: "run" | "submit"; contest_id?: string };
 
+// ----- Plagiarism: normalize + tokenize + Jaccard similarity -----
+function normalizeCode(src: string, lang: string): string {
+  let s = src;
+  // strip block comments
+  s = s.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // strip line comments
+  if (lang === "python") {
+    s = s.replace(/(^|\n)\s*#[^\n]*/g, "$1");
+    // triple-quoted docstrings
+    s = s.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''/g, " ");
+  } else {
+    s = s.replace(/\/\/[^\n]*/g, " ");
+  }
+  // strip string literals
+  s = s.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/'(?:\\.|[^'\\])*'/g, "''");
+  // collapse whitespace
+  s = s.replace(/\s+/g, " ").trim().toLowerCase();
+  return s;
+}
+function tokenSet(src: string): Set<string> {
+  const tokens = src.match(/[a-z_][a-z0-9_]*|[0-9]+|[^\s\w]/gi) ?? [];
+  // 3-gram shingles for stronger signal
+  const shingles = new Set<string>();
+  for (let i = 0; i + 3 <= tokens.length; i++) shingles.add(tokens.slice(i, i + 3).join("|"));
+  if (shingles.size === 0) tokens.forEach((t) => shingles.add(t));
+  return shingles;
+}
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  const [small, big] = a.size < b.size ? [a, b] : [b, a];
+  for (const t of small) if (big.has(t)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+async function runPlagiarismCheck(admin: any, params: {
+  submission_id: string;
+  user_id: string;
+  problem_id: string;
+  contest_id: string | null;
+  language: string;
+  code: string;
+}) {
+  try {
+    const norm = normalizeCode(params.code, params.language);
+    if (norm.length < 40) return; // too small to be meaningful
+    const tokens = tokenSet(norm);
+
+    // Compare against accepted submissions for the same problem+language by other users
+    let q = admin
+      .from("submissions")
+      .select("id, user_id, code, contest_id, created_at")
+      .eq("problem_id", params.problem_id)
+      .eq("language", params.language)
+      .eq("status", "accepted")
+      .neq("user_id", params.user_id)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (params.contest_id) q = q.eq("contest_id", params.contest_id);
+    const { data: others } = await q;
+    if (!others?.length) return;
+
+    let best = { sim: 0, sub: null as any };
+    for (const o of others) {
+      const sim = jaccard(tokens, tokenSet(normalizeCode(o.code, params.language)));
+      if (sim > best.sim) best = { sim, sub: o };
+    }
+    if (best.sim >= 0.8 && best.sub) {
+      await admin.from("plagiarism_reports").insert({
+        submission_id: params.submission_id,
+        matched_submission_id: best.sub.id,
+        user_id: params.user_id,
+        matched_user_id: best.sub.user_id,
+        problem_id: params.problem_id,
+        contest_id: params.contest_id,
+        similarity: Math.round(best.sim * 10000) / 10000,
+        language: params.language,
+      });
+    }
+  } catch (e) {
+    console.error("plagiarism check failed", e);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -141,7 +225,7 @@ Deno.serve(async (req) => {
     }
 
     if (body.mode === "submit" && user) {
-      await admin.from("submissions").insert({
+      const { data: subRow } = await admin.from("submissions").insert({
         user_id: user.id,
         problem_id: body.problem_id,
         contest_id: validContestId,
@@ -154,7 +238,19 @@ Deno.serve(async (req) => {
         total_count: totalCount,
         error_message: firstError,
         score: overall === "accepted" ? 100 : Math.floor((passedCount / Math.max(1, totalCount)) * 100),
-      });
+      }).select("id").maybeSingle();
+
+      // Run plagiarism check for accepted submissions only
+      if (overall === "accepted" && subRow?.id) {
+        await runPlagiarismCheck(admin, {
+          submission_id: subRow.id,
+          user_id: user.id,
+          problem_id: body.problem_id,
+          contest_id: validContestId,
+          language: body.language,
+          code: body.code,
+        });
+      }
 
       if (overall === "accepted") {
         const { data: prev } = await admin

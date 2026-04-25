@@ -1,4 +1,4 @@
-import { LayoutDashboard, ListChecks, FilePlus2, ShieldCheck, Trophy, Users, Inbox, ArrowLeft } from "lucide-react";
+import { LayoutDashboard, ListChecks, FilePlus2, ShieldCheck, Trophy, Users, Inbox, ArrowLeft, ShieldAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -21,6 +21,7 @@ const items = [
   { title: "Contests", url: "/admin/contests", icon: Trophy, end: false },
   { title: "Users", url: "/admin/users", icon: Users, end: true },
   { title: "Submissions", url: "/admin/submissions", icon: Inbox, end: true },
+  { title: "Plagiarism", url: "/admin/plagiarism", icon: ShieldAlert, end: true },
 ];
 
 export function AdminSidebar() {

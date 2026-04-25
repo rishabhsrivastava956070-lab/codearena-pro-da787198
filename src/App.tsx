@@ -25,6 +25,7 @@ import AdminApprovals from "./pages/admin/AdminApprovals";
 import AdminContests from "./pages/admin/AdminContests";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminSubmissions from "./pages/admin/AdminSubmissions";
+import AdminPlagiarism from "./pages/admin/AdminPlagiarism";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -51,6 +52,7 @@ const App = () => (
               <Route path="contests" element={<AdminContests />} />
               <Route path="users" element={<AdminUsers />} />
               <Route path="submissions" element={<AdminSubmissions />} />
+              <Route path="plagiarism" element={<AdminPlagiarism />} />
             </Route>
             <Route element={<AppLayout />}>
               <Route path="/" element={<Home />} />
