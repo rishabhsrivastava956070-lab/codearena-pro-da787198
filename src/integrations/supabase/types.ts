@@ -287,8 +287,12 @@ export type Database = {
           is_published: boolean
           memory_limit_mb: number
           output_format: string | null
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
           slug: string
           starter_code: Json
+          status: Database["public"]["Enums"]["problem_status"]
           tags: string[]
           time_limit_ms: number
           title: string
@@ -306,8 +310,12 @@ export type Database = {
           is_published?: boolean
           memory_limit_mb?: number
           output_format?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           slug: string
           starter_code?: Json
+          status?: Database["public"]["Enums"]["problem_status"]
           tags?: string[]
           time_limit_ms?: number
           title: string
@@ -325,8 +333,12 @@ export type Database = {
           is_published?: boolean
           memory_limit_mb?: number
           output_format?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           slug?: string
           starter_code?: Json
+          status?: Database["public"]["Enums"]["problem_status"]
           tags?: string[]
           time_limit_ms?: number
           title?: string
@@ -556,6 +568,7 @@ export type Database = {
       app_role: "admin" | "user"
       code_language: "cpp" | "java" | "python" | "javascript"
       difficulty: "easy" | "medium" | "hard"
+      problem_status: "pending" | "approved" | "rejected"
       submission_status:
         | "pending"
         | "running"
@@ -696,6 +709,7 @@ export const Constants = {
       app_role: ["admin", "user"],
       code_language: ["cpp", "java", "python", "javascript"],
       difficulty: ["easy", "medium", "hard"],
+      problem_status: ["pending", "approved", "rejected"],
       submission_status: [
         "pending",
         "running",
