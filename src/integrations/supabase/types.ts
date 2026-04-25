@@ -274,6 +274,57 @@ export type Database = {
           },
         ]
       }
+      plagiarism_reports: {
+        Row: {
+          contest_id: string | null
+          created_at: string
+          id: string
+          language: string
+          matched_submission_id: string
+          matched_user_id: string
+          problem_id: string
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          similarity: number
+          status: Database["public"]["Enums"]["plagiarism_status"]
+          submission_id: string
+          user_id: string
+        }
+        Insert: {
+          contest_id?: string | null
+          created_at?: string
+          id?: string
+          language: string
+          matched_submission_id: string
+          matched_user_id: string
+          problem_id: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          similarity: number
+          status?: Database["public"]["Enums"]["plagiarism_status"]
+          submission_id: string
+          user_id: string
+        }
+        Update: {
+          contest_id?: string | null
+          created_at?: string
+          id?: string
+          language?: string
+          matched_submission_id?: string
+          matched_user_id?: string
+          problem_id?: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          similarity?: number
+          status?: Database["public"]["Enums"]["plagiarism_status"]
+          submission_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       problems: {
         Row: {
           constraints: string | null
@@ -568,6 +619,7 @@ export type Database = {
       app_role: "admin" | "user"
       code_language: "cpp" | "java" | "python" | "javascript"
       difficulty: "easy" | "medium" | "hard"
+      plagiarism_status: "pending" | "dismissed" | "confirmed"
       problem_status: "pending" | "approved" | "rejected"
       submission_status:
         | "pending"
@@ -709,6 +761,7 @@ export const Constants = {
       app_role: ["admin", "user"],
       code_language: ["cpp", "java", "python", "javascript"],
       difficulty: ["easy", "medium", "hard"],
+      plagiarism_status: ["pending", "dismissed", "confirmed"],
       problem_status: ["pending", "approved", "rejected"],
       submission_status: [
         "pending",
