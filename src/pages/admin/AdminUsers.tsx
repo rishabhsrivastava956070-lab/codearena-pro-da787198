@@ -26,9 +26,11 @@ export default function AdminUsers() {
       supabase.from("user_stats").select("user_id, problems_solved, xp, streak"),
       supabase.from("user_roles").select("user_id, role").eq("role", "admin"),
     ]);
-    const statMap = new Map((stats || []).map((s: { user_id: string } & Record<string, number>) => [s.user_id, s]));
+    type Stat = { user_id: string; problems_solved: number; xp: number; streak: number };
+    const statMap = new Map<string, Stat>((stats as Stat[] | null || []).map((s) => [s.user_id, s]));
     const adminSet = new Set((roles || []).map((r: { user_id: string }) => r.user_id));
-    setRows((profs || []).map((p: { id: string; username: string | null; display_name: string | null; created_at: string }) => ({
+    type Prof = { id: string; username: string | null; display_name: string | null; created_at: string };
+    setRows((profs as Prof[] | null || []).map((p) => ({
       ...p,
       problems_solved: statMap.get(p.id)?.problems_solved || 0,
       xp: statMap.get(p.id)?.xp || 0,

@@ -18,8 +18,9 @@ type Sub = {
   passed_count: number | null;
   total_count: number | null;
   runtime_ms: number | null;
-  problems: { title: string; slug: string } | null;
-  profiles: { username: string | null } | null;
+  problem_title?: string;
+  problem_slug?: string;
+  username?: string | null;
 };
 
 const statusColor: Record<string, string> = {
@@ -37,12 +38,26 @@ export default function AdminSubmissions() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
+      const { data: subs } = await supabase
         .from("submissions")
-        .select("id, status, language, created_at, user_id, problem_id, passed_count, total_count, runtime_ms, problems(title, slug), profiles!submissions_user_id_fkey(username)")
+        .select("id, status, language, created_at, user_id, problem_id, passed_count, total_count, runtime_ms")
         .order("created_at", { ascending: false })
         .limit(200);
-      setRows((data as unknown as Sub[]) || []);
+      const list = (subs as Sub[] | null) || [];
+      const userIds = Array.from(new Set(list.map((s) => s.user_id)));
+      const probIds = Array.from(new Set(list.map((s) => s.problem_id)));
+      const [{ data: profs }, { data: probs }] = await Promise.all([
+        userIds.length ? supabase.from("profiles").select("id, username").in("id", userIds) : Promise.resolve({ data: [] }),
+        probIds.length ? supabase.from("problems").select("id, title, slug").in("id", probIds) : Promise.resolve({ data: [] }),
+      ]);
+      const userMap = new Map((profs as { id: string; username: string | null }[] || []).map((p) => [p.id, p]));
+      const probMap = new Map((probs as { id: string; title: string; slug: string }[] || []).map((p) => [p.id, p]));
+      setRows(list.map((s) => ({
+        ...s,
+        username: userMap.get(s.user_id)?.username ?? null,
+        problem_title: probMap.get(s.problem_id)?.title,
+        problem_slug: probMap.get(s.problem_id)?.slug,
+      })));
     })();
   }, []);
 
@@ -53,8 +68,8 @@ export default function AdminSubmissions() {
       if (status !== "all" && r.status !== status) return false;
       if (!q) return true;
       return (
-        (r.problems?.title || "").toLowerCase().includes(ql) ||
-        (r.profiles?.username || "").toLowerCase().includes(ql)
+        (r.problem_title || "").toLowerCase().includes(ql) ||
+        (r.username || "").toLowerCase().includes(ql)
       );
     });
   }, [rows, q, status]);
@@ -100,8 +115,8 @@ export default function AdminSubmissions() {
             <TableBody>
               {filtered.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.profiles?.username ? <Link to={`/u/${r.profiles.username}`} className="hover:text-primary">@{r.profiles.username}</Link> : "—"}</TableCell>
-                  <TableCell>{r.problems?.slug ? <Link to={`/problems/${r.problems.slug}`} className="hover:text-primary">{r.problems.title}</Link> : "—"}</TableCell>
+                  <TableCell>{r.username ? <Link to={`/u/${r.username}`} className="hover:text-primary">@{r.username}</Link> : "—"}</TableCell>
+                  <TableCell>{r.problem_slug ? <Link to={`/problems/${r.problem_slug}`} className="hover:text-primary">{r.problem_title}</Link> : "—"}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className={statusColor[r.status] || statusColor.pending}>{r.status.replace(/_/g, " ")}</Badge>
                   </TableCell>
