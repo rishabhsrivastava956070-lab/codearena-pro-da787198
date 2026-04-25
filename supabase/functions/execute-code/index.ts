@@ -8,7 +8,14 @@ const corsHeaders = {
 const JUDGE0_BASE = "https://ce.judge0.com";
 const LANG_ID: Record<string, number> = { cpp: 54, java: 62, python: 71, javascript: 63 };
 
-type SubmitBody = { problem_id: string; language: string; code: string; mode: "run" | "submit"; contest_id?: string };
+type SubmitBody = {
+  problem_id: string;
+  language: string;
+  code: string;
+  mode: "run" | "submit" | "custom";
+  contest_id?: string;
+  stdin?: string; // only for mode === "custom"
+};
 
 // ----- Plagiarism: normalize + tokenize + Jaccard similarity -----
 function normalizeCode(src: string, lang: string): string {
@@ -118,6 +125,55 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const { data: prob } = await admin.from("problems").select("id, time_limit_ms, memory_limit_mb").eq("id", body.problem_id).maybeSingle();
     if (!prob) throw new Error("Problem not found");
+
+    // ----- CUSTOM mode: run once against user-provided stdin, no DB writes -----
+    if (body.mode === "custom") {
+      const submission = {
+        source_code: body.code,
+        language_id: LANG_ID[body.language],
+        stdin: body.stdin ?? "",
+        cpu_time_limit: Math.max(1, Math.ceil((prob.time_limit_ms ?? 2000) / 1000)),
+        memory_limit: (prob.memory_limit_mb ?? 256) * 1024,
+      };
+      const submitRes = await fetch(`${JUDGE0_BASE}/submissions?base64_encoded=false&wait=false`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submission),
+      });
+      if (!submitRes.ok) {
+        const text = await submitRes.text();
+        throw new Error(`Judge0 submit ${submitRes.status}: ${text.slice(0, 200)}`);
+      }
+      const { token } = await submitRes.json();
+      if (!token) throw new Error("Judge0 returned no token");
+      let j: any = null;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((res) => setTimeout(res, 700));
+        const pollRes = await fetch(
+          `${JUDGE0_BASE}/submissions/${token}?base64_encoded=false&fields=stdout,stderr,compile_output,message,status,time,memory`,
+          { headers: { "Content-Type": "application/json" } },
+        );
+        if (!pollRes.ok) throw new Error(`Judge0 poll ${pollRes.status}`);
+        j = await pollRes.json();
+        if (j?.status?.id && j.status.id >= 3) break;
+      }
+      if (!j?.status) throw new Error("Judge0 polling timed out");
+      let mapped = "accepted";
+      if (j.status.id === 5) mapped = "time_limit_exceeded";
+      else if (j.status.id === 6) mapped = "compilation_error";
+      else if (j.status.id >= 7 && j.status.id <= 12) mapped = "runtime_error";
+      else if (j.status.id !== 3) mapped = "internal_error";
+      return new Response(
+        JSON.stringify({
+          status: mapped,
+          stdout: j.stdout ?? "",
+          stderr: j.stderr ?? j.compile_output ?? j.message ?? "",
+          runtime_ms: Math.round(parseFloat(j.time || "0") * 1000),
+          memory_kb: j.memory ?? 0,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const { data: cases } = await admin
       .from("test_cases")

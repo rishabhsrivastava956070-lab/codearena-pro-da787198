@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Loader2, Play, Send, Sparkles, CheckCircle2, XCircle, Clock, Trophy } from "lucide-react";
+import { Loader2, Play, Send, Sparkles, CheckCircle2, XCircle, Clock, Trophy, FlaskConical, History as HistoryIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { DifficultyBadge } from "@/components/problems/DifficultyBadge";
 import {
   Select,
@@ -18,6 +19,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CodeEditor, type Lang } from "@/components/editor/CodeEditor";
+import { useCodeAutosave, loadDraft } from "@/hooks/useCodeAutosave";
+import { VersionHistoryPanel } from "@/components/problems/VersionHistoryPanel";
 import { toast } from "sonner";
 
 type Problem = {
@@ -54,6 +57,13 @@ type RunResult = {
   error_message?: string;
   cases?: { input: string; expected: string; got: string; passed: boolean; status: string }[];
 };
+type CustomResult = {
+  status: string;
+  stdout: string;
+  stderr: string;
+  runtime_ms: number;
+  memory_kb: number;
+};
 
 export default function ProblemDetail() {
   const { slug } = useParams<{ slug: string }>();
@@ -71,6 +81,11 @@ export default function ProblemDetail() {
   const [aiFeedback, setAiFeedback] = useState<string>("");
   const [result, setResult] = useState<RunResult | null>(null);
   const [history, setHistory] = useState<Submission[]>([]);
+  // Custom test panel state
+  const [customStdin, setCustomStdin] = useState<string>("");
+  const [customResult, setCustomResult] = useState<CustomResult | null>(null);
+  const [customRunning, setCustomRunning] = useState(false);
+  const [outputTab, setOutputTab] = useState<string>("result");
 
   useEffect(() => {
     if (!slug) return;
@@ -95,14 +110,27 @@ export default function ProblemDetail() {
 
   useEffect(() => {
     if (problem && (problem.starter_code as Record<string, string>)?.[language] !== undefined) {
-      const saved = localStorage.getItem(`code:${problem.id}:${language}`);
-      setCode(saved ?? (problem.starter_code as Record<string, string>)[language] ?? "");
+      // Prefer cloud draft (when signed in), else localStorage fallback, else starter code.
+      (async () => {
+        if (user) {
+          const draft = await loadDraft(user.id, problem.id, language);
+          if (draft?.code) {
+            setCode(draft.code);
+            return;
+          }
+        }
+        const saved = localStorage.getItem(`code:${problem.id}:${language}`);
+        setCode(saved ?? (problem.starter_code as Record<string, string>)[language] ?? "");
+      })();
     }
-  }, [language, problem]);
+  }, [language, problem, user]);
 
   useEffect(() => {
     if (problem && code) localStorage.setItem(`code:${problem.id}:${language}`, code);
   }, [code, language, problem]);
+
+  // Cloud autosave (debounced) for signed-in users
+  useCodeAutosave({ userId: user?.id, problemId: problem?.id, language, code });
 
   useEffect(() => {
     if (!problem || !user) return;
@@ -155,10 +183,29 @@ export default function ProblemDetail() {
     }
   };
 
+  const runCustom = async () => {
+    if (!problem) return;
+    setCustomRunning(true);
+    setCustomResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("execute-code", {
+        body: { problem_id: problem.id, language, code, mode: "custom", stdin: customStdin },
+      });
+      if (error) throw error;
+      setCustomResult(data as CustomResult);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Execution failed";
+      toast.error(msg);
+    } finally {
+      setCustomRunning(false);
+    }
+  };
+
   const aiReview = async () => {
     if (!problem) return;
     setAiReviewing(true);
     setAiFeedback("");
+    setOutputTab("ai");
     try {
       const { data, error } = await supabase.functions.invoke("ai-code-review", {
         body: { problem_title: problem.title, problem_description: problem.description, language, code },
@@ -299,49 +346,134 @@ export default function ProblemDetail() {
           </div>
         </Card>
 
-        <Card className="overflow-hidden max-h-[40vh] flex flex-col">
-          <div className="border-b border-border px-4 py-2 text-sm font-semibold">Output</div>
-          <div className="overflow-y-auto p-4 text-sm space-y-3">
-            {aiFeedback && (
-              <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
-                <div className="text-xs uppercase tracking-wide text-primary mb-1 flex items-center gap-1">
-                  <Sparkles className="h-3 w-3" /> AI Code Review
+        <Card className="overflow-hidden max-h-[45vh] flex flex-col">
+          <Tabs value={outputTab} onValueChange={setOutputTab} className="flex-1 flex flex-col">
+            <div className="border-b border-border px-3">
+              <TabsList className="bg-transparent p-0 h-10">
+                <TabsTrigger value="result" className="data-[state=active]:bg-transparent text-xs">
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Result
+                </TabsTrigger>
+                <TabsTrigger value="custom" className="data-[state=active]:bg-transparent text-xs">
+                  <FlaskConical className="h-3.5 w-3.5 mr-1" /> Custom
+                </TabsTrigger>
+                <TabsTrigger value="ai" className="data-[state=active]:bg-transparent text-xs">
+                  <Sparkles className="h-3.5 w-3.5 mr-1" /> AI
+                </TabsTrigger>
+                <TabsTrigger value="versions" className="data-[state=active]:bg-transparent text-xs">
+                  <HistoryIcon className="h-3.5 w-3.5 mr-1" /> Versions
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="result" className="flex-1 overflow-y-auto p-4 mt-0 text-sm space-y-3">
+              {!result && <div className="text-muted-foreground">Run your code to see output here.</div>}
+              {result && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <StatusIcon s={result.status} />
+                    <span className={`font-semibold ${statusColor(result.status)}`}>{result.status.replace(/_/g, " ")}</span>
+                    <span className="text-muted-foreground text-xs">
+                      {result.passed_count}/{result.total_count} cases
+                      {result.runtime_ms !== undefined && <> · {result.runtime_ms}ms</>}
+                    </span>
+                  </div>
+                  {result.error_message && (
+                    <pre className="bg-destructive/10 border border-destructive/30 text-destructive rounded-md p-2 text-xs whitespace-pre-wrap">{result.error_message}</pre>
+                  )}
+                  {result.cases?.map((c, i) => (
+                    <div key={i} className={`rounded-md border p-2 text-xs ${c.passed ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                      <div className="flex items-center gap-2 font-semibold mb-1">
+                        {c.passed ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                        Case {i + 1}
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 font-mono">
+                        <div><div className="text-muted-foreground">Input</div><pre className="whitespace-pre-wrap">{c.input}</pre></div>
+                        <div><div className="text-muted-foreground">Expected</div><pre className="whitespace-pre-wrap">{c.expected}</pre></div>
+                        <div><div className="text-muted-foreground">Got</div><pre className="whitespace-pre-wrap">{c.got || "—"}</pre></div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="custom" className="flex-1 overflow-y-auto p-4 mt-0 text-sm space-y-3">
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">Custom stdin</div>
+                <Textarea
+                  value={customStdin}
+                  onChange={(e) => setCustomStdin(e.target.value)}
+                  placeholder="Paste any input you'd like to test against…"
+                  className="font-mono text-xs min-h-[80px]"
+                />
+                <div className="flex justify-end">
+                  <Button size="sm" onClick={runCustom} disabled={customRunning}>
+                    {customRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    <span className="ml-1">Run with input</span>
+                  </Button>
+                </div>
+              </div>
+              {customResult && (
+                <div className="space-y-2 border-t border-border pt-3">
+                  <div className="flex items-center gap-2">
+                    <StatusIcon s={customResult.status} />
+                    <span className={`font-semibold ${statusColor(customResult.status)}`}>
+                      {customResult.status.replace(/_/g, " ")}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      {customResult.runtime_ms}ms · {Math.round(customResult.memory_kb / 1024)}MB
+                    </span>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">stdout</div>
+                    <pre className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap font-mono max-h-40 overflow-auto">
+                      {customResult.stdout || "—"}
+                    </pre>
+                  </div>
+                  {customResult.stderr && (
+                    <div>
+                      <div className="text-xs text-destructive mb-1">stderr</div>
+                      <pre className="bg-destructive/10 border border-destructive/30 text-destructive rounded p-2 text-xs whitespace-pre-wrap font-mono max-h-40 overflow-auto">
+                        {customResult.stderr}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="ai" className="flex-1 overflow-y-auto p-4 mt-0 text-sm">
+              {aiReviewing && !aiFeedback && (
+                <div className="text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Analyzing your code…
+                </div>
+              )}
+              {!aiReviewing && !aiFeedback && (
+                <div className="text-muted-foreground">
+                  Click <span className="font-medium">AI Review</span> to get an explanation, complexity estimate, and improvement suggestions.
+                </div>
+              )}
+              {aiFeedback && (
                 <div className="prose prose-invert prose-sm max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiFeedback}</ReactMarkdown>
                 </div>
-              </div>
-            )}
-            {!result && !aiFeedback && <div className="text-muted-foreground">Run your code to see output here.</div>}
-            {result && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <StatusIcon s={result.status} />
-                  <span className={`font-semibold ${statusColor(result.status)}`}>{result.status.replace(/_/g, " ")}</span>
-                  <span className="text-muted-foreground text-xs">
-                    {result.passed_count}/{result.total_count} cases
-                    {result.runtime_ms !== undefined && <> · {result.runtime_ms}ms</>}
-                  </span>
-                </div>
-                {result.error_message && (
-                  <pre className="bg-destructive/10 border border-destructive/30 text-destructive rounded-md p-2 text-xs whitespace-pre-wrap">{result.error_message}</pre>
-                )}
-                {result.cases?.map((c, i) => (
-                  <div key={i} className={`rounded-md border p-2 text-xs ${c.passed ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
-                    <div className="flex items-center gap-2 font-semibold mb-1">
-                      {c.passed ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
-                      Case {i + 1}
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 font-mono">
-                      <div><div className="text-muted-foreground">Input</div><pre className="whitespace-pre-wrap">{c.input}</pre></div>
-                      <div><div className="text-muted-foreground">Expected</div><pre className="whitespace-pre-wrap">{c.expected}</pre></div>
-                      <div><div className="text-muted-foreground">Got</div><pre className="whitespace-pre-wrap">{c.got || "—"}</pre></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="versions" className="flex-1 overflow-hidden mt-0">
+              <VersionHistoryPanel
+                userId={user?.id}
+                problemId={problem.id}
+                language={language}
+                currentCode={code}
+                onRestore={(c, l) => {
+                  setLanguage(l as Lang);
+                  setCode(c);
+                  toast.success("Restored from snapshot");
+                }}
+              />
+            </TabsContent>
+          </Tabs>
         </Card>
       </div>
     </div>
