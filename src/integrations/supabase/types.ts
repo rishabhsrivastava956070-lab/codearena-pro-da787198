@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      code_drafts: {
+        Row: {
+          code: string
+          language: string
+          problem_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          code?: string
+          language: string
+          problem_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          code?: string
+          language?: string
+          problem_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      code_versions: {
+        Row: {
+          code: string
+          created_at: string
+          id: string
+          label: string | null
+          language: string
+          problem_id: string
+          user_id: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          id?: string
+          label?: string | null
+          language: string
+          problem_id: string
+          user_id: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          id?: string
+          label?: string | null
+          language?: string
+          problem_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       comments: {
         Row: {
           body: string
