@@ -237,14 +237,14 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ----- RUN mode: sample tests only, synchronous, no DB writes -----
     const { data: cases } = await admin
       .from("test_cases")
       .select("input, expected_output, is_sample")
       .eq("problem_id", body.problem_id)
       .order("ordering");
-    let testCases = cases || [];
-    if (body.mode === "run") testCases = testCases.filter((c) => c.is_sample);
-    if (testCases.length === 0) throw new Error("No test cases");
+    const testCases = (cases || []).filter((c) => c.is_sample);
+    if (testCases.length === 0) throw new Error("No sample test cases");
 
     const results: { input: string; expected: string; got: string; passed: boolean; status: string }[] = [];
     let overall: string = "accepted";
@@ -310,92 +310,11 @@ Deno.serve(async (req) => {
       if (!passed && overall === "accepted") {
         overall = mappedStatus;
         firstError = j.compile_output || j.stderr || j.message || null;
-        if (body.mode === "submit") break;
       }
     }
 
     const passedCount = results.filter((r) => r.passed).length;
-    const totalCount = body.mode === "run" ? testCases.length : (cases?.length ?? testCases.length);
-
-    // Validate contest window server-side: only count submission for contest if within window
-    let validContestId: string | null = null;
-    if (body.mode === "submit" && body.contest_id && user) {
-      const { data: c } = await admin
-        .from("contests")
-        .select("id, start_time, end_time")
-        .eq("id", body.contest_id)
-        .maybeSingle();
-      if (c) {
-        const now = Date.now();
-        const start = new Date(c.start_time).getTime();
-        const end = new Date(c.end_time).getTime();
-        if (now >= start && now <= end) {
-          // Also verify the problem belongs to the contest
-          const { data: cp } = await admin
-            .from("contest_problems")
-            .select("contest_id")
-            .eq("contest_id", c.id)
-            .eq("problem_id", body.problem_id)
-            .maybeSingle();
-          if (cp) validContestId = c.id;
-        }
-      }
-    }
-
-    if (body.mode === "submit" && user) {
-      const { data: subRow } = await admin.from("submissions").insert({
-        user_id: user.id,
-        problem_id: body.problem_id,
-        contest_id: validContestId,
-        language: body.language,
-        code: body.code,
-        status: overall,
-        runtime_ms: totalRuntime,
-        memory_kb: maxMemory,
-        passed_count: passedCount,
-        total_count: totalCount,
-        error_message: firstError,
-        score: overall === "accepted" ? 100 : Math.floor((passedCount / Math.max(1, totalCount)) * 100),
-      }).select("id").maybeSingle();
-
-      // Run plagiarism check for accepted submissions only
-      if (overall === "accepted" && subRow?.id) {
-        await runPlagiarismCheck(admin, {
-          submission_id: subRow.id,
-          user_id: user.id,
-          problem_id: body.problem_id,
-          contest_id: validContestId,
-          language: body.language,
-          code: body.code,
-        });
-      }
-
-      if (overall === "accepted") {
-        const { data: prev } = await admin
-          .from("submissions")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("problem_id", body.problem_id)
-          .eq("status", "accepted")
-          .limit(2);
-        if ((prev?.length ?? 0) <= 1) {
-          const { data: stats } = await admin.from("user_stats").select("*").eq("user_id", user.id).maybeSingle();
-          const today = new Date().toISOString().slice(0, 10);
-          const last = stats?.last_active_date;
-          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-          const newStreak = last === today ? stats?.streak ?? 1 : last === yesterday ? (stats?.streak ?? 0) + 1 : 1;
-          const newXp = (stats?.xp ?? 0) + 10;
-          await admin.from("user_stats").update({
-            xp: newXp,
-            level: Math.floor(newXp / 100) + 1,
-            streak: newStreak,
-            longest_streak: Math.max(stats?.longest_streak ?? 0, newStreak),
-            last_active_date: today,
-            problems_solved: (stats?.problems_solved ?? 0) + 1,
-          }).eq("user_id", user.id);
-        }
-      }
-    }
+    const totalCount = testCases.length;
 
     return new Response(JSON.stringify({
       status: overall,
@@ -404,7 +323,7 @@ Deno.serve(async (req) => {
       runtime_ms: totalRuntime,
       memory_kb: maxMemory,
       error_message: firstError,
-      cases: body.mode === "run" ? results : results.slice(0, 1),
+      cases: results,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Internal error";
