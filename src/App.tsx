@@ -17,7 +17,14 @@ import NewDiscussion from "./pages/discussions/NewDiscussion";
 import DiscussionDetail from "./pages/discussions/DiscussionDetail";
 import PeerRooms from "./pages/PeerRooms";
 import Profile from "./pages/Profile";
-import AdminPanel from "./pages/admin/AdminPanel";
+import { AdminLayout } from "./components/admin/AdminLayout";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+import AdminProblems from "./pages/admin/AdminProblems";
+import AdminProblemForm from "./pages/admin/AdminProblemForm";
+import AdminApprovals from "./pages/admin/AdminApprovals";
+import AdminContests from "./pages/admin/AdminContests";
+import AdminUsers from "./pages/admin/AdminUsers";
+import AdminSubmissions from "./pages/admin/AdminSubmissions";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -34,6 +41,17 @@ const App = () => (
           <Routes>
             <Route path="/auth" element={<AuthPage />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            {/* Admin: nested layout, fully role-gated inside AdminLayout */}
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<AdminDashboard />} />
+              <Route path="problems" element={<AdminProblems />} />
+              <Route path="problems/create" element={<AdminProblemForm />} />
+              <Route path="problems/:id/edit" element={<AdminProblemForm />} />
+              <Route path="approvals" element={<AdminApprovals />} />
+              <Route path="contests" element={<AdminContests />} />
+              <Route path="users" element={<AdminUsers />} />
+              <Route path="submissions" element={<AdminSubmissions />} />
+            </Route>
             <Route element={<AppLayout />}>
               <Route path="/" element={<Home />} />
               <Route path="/problems" element={<ProblemsList />} />
@@ -47,7 +65,6 @@ const App = () => (
               <Route path="/rooms/:code" element={<PeerRooms />} />
               <Route path="/u/:username" element={<Profile />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-              <Route path="/admin" element={<ProtectedRoute adminOnly><AdminPanel /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
