@@ -74,18 +74,7 @@ A full-stack coding platform similar to LeetCode with advanced features like rea
 4. Results are stored and shown in UI
 5. AI analyzes code and gives suggestions
 
----
 
-## 📸 Screenshots
 
-(Add screenshots here)
 
----
-
-## 🚀 Installation (Local Setup)
-
-```bash
-git clone https://github.com/your-username/codearena-pro.git
-cd codearena-pro
-npm install
 npm run dev
