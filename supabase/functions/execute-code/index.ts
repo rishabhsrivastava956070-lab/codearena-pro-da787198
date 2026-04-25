@@ -5,7 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const JUDGE0_HOST = "judge0-ce.p.rapidapi.com";
+const JUDGE0_BASE = "https://ce.judge0.com";
 const LANG_ID: Record<string, number> = { cpp: 54, java: 62, python: 71, javascript: 63 };
 
 type SubmitBody = { problem_id: string; language: string; code: string; mode: "run" | "submit" };
@@ -14,8 +14,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const RAPIDAPI_KEY = Deno.env.get("JUDGE0_RAPIDAPI_KEY");
-    if (!RAPIDAPI_KEY) throw new Error("JUDGE0_RAPIDAPI_KEY not configured");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const SUPABASE_ANON = Deno.env.get("SUPABASE_PUBLISHABLE_KEY") || Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -61,17 +59,36 @@ Deno.serve(async (req) => {
         cpu_time_limit: Math.max(1, Math.ceil((prob.time_limit_ms ?? 2000) / 1000)),
         memory_limit: (prob.memory_limit_mb ?? 256) * 1024,
       };
-      const r = await fetch(`https://${JUDGE0_HOST}/submissions?base64_encoded=false&wait=true`, {
+      // Submit (async) then poll — public ce.judge0.com may not honor wait=true reliably
+      const submitRes = await fetch(`${JUDGE0_BASE}/submissions?base64_encoded=false&wait=false`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-RapidAPI-Host": JUDGE0_HOST,
-          "X-RapidAPI-Key": RAPIDAPI_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(submission),
       });
-      if (!r.ok) throw new Error(`Judge0 ${r.status}`);
-      const j = await r.json();
+      if (!submitRes.ok) {
+        const text = await submitRes.text();
+        throw new Error(`Judge0 submit ${submitRes.status}: ${text.slice(0, 200)}`);
+      }
+      const { token } = await submitRes.json();
+      if (!token) throw new Error("Judge0 returned no token");
+
+      let j: any = null;
+      const maxAttempts = 20;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((res) => setTimeout(res, 700));
+        const pollRes = await fetch(
+          `${JUDGE0_BASE}/submissions/${token}?base64_encoded=false&fields=stdout,stderr,compile_output,message,status,time,memory`,
+          { headers: { "Content-Type": "application/json" } },
+        );
+        if (!pollRes.ok) {
+          const text = await pollRes.text();
+          throw new Error(`Judge0 poll ${pollRes.status}: ${text.slice(0, 200)}`);
+        }
+        j = await pollRes.json();
+        // status id 1 = In Queue, 2 = Processing; anything >=3 is final
+        if (j?.status?.id && j.status.id >= 3) break;
+      }
+      if (!j || !j.status) throw new Error("Judge0 polling timed out");
       const got = (j.stdout ?? "").trimEnd();
       const expected = (tc.expected_output ?? "").trimEnd();
       const passed = j.status?.id === 3 && got === expected;
