@@ -155,6 +155,7 @@ export default function ProblemDetail() {
     const setBusy = mode === "run" ? setRunning : setSubmitting;
     setBusy(true);
     setResult(null);
+    setOutputTab("result");
     try {
       const { data, error } = await supabase.functions.invoke("execute-code", {
         body: {
@@ -162,26 +163,128 @@ export default function ProblemDetail() {
           language,
           code,
           mode,
-          // Server validates the window; we just pass the hint.
           ...(mode === "submit" && contestId ? { contest_id: contestId } : {}),
         },
       });
-      if (error) throw error;
-      setResult(data as RunResult);
-      if (mode === "submit") {
-        if ((data as RunResult).status === "accepted") {
-          toast.success(`Accepted! ${(data as RunResult).passed_count}/${(data as RunResult).total_count} tests passed`);
+      if (error) {
+        // Surface server-side rate-limit specifically
+        const msg = (error as { message?: string }).message || "Execution failed";
+        if (msg.toLowerCase().includes("rate") || msg.includes("429")) {
+          toast.error("Too many submissions. Wait a moment and retry.");
         } else {
-          toast.error(`${(data as RunResult).status.replace(/_/g, " ")}`);
+          toast.error(msg);
         }
+        throw error;
       }
+
+      if (mode === "run") {
+        setResult(data as RunResult);
+        return;
+      }
+
+      // SUBMIT: server returns { status: "queued", submission_id }. Watch realtime.
+      const queued = data as { status: string; submission_id?: string };
+      if (queued.status !== "queued" || !queued.submission_id) {
+        // Backwards-compat fallback: treat as final result
+        setResult(data as RunResult);
+        return;
+      }
+      setResult({
+        status: "queued",
+        passed_count: 0,
+        total_count: 0,
+      });
+      toast.message("Submission queued — judging in progress…");
+      await waitForSubmissionResult(queued.submission_id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Execution failed";
-      toast.error(msg);
+      // Already toasted above for known cases; swallow here
+      console.error("submit failed", err);
     } finally {
       setBusy(false);
     }
   };
+
+  // Subscribe to the submissions row and resolve when it reaches a final state
+  const waitForSubmissionResult = (submissionId: string) =>
+    new Promise<void>((resolve) => {
+      const TERMINAL = new Set([
+        "accepted", "wrong_answer", "time_limit_exceeded",
+        "compilation_error", "runtime_error", "memory_limit_exceeded", "internal_error",
+      ]);
+
+      const finalize = (row: {
+        status: string;
+        passed_count: number | null;
+        total_count: number | null;
+        runtime_ms: number | null;
+        memory_kb: number | null;
+        error_message: string | null;
+      }) => {
+        const final: RunResult = {
+          status: row.status,
+          passed_count: row.passed_count ?? 0,
+          total_count: row.total_count ?? 0,
+          runtime_ms: row.runtime_ms ?? undefined,
+          memory_kb: row.memory_kb ?? undefined,
+          error_message: row.error_message ?? undefined,
+        };
+        setResult(final);
+        if (row.status === "accepted") {
+          toast.success(`Accepted! ${final.passed_count}/${final.total_count} tests passed`);
+        } else {
+          toast.error(row.status.replace(/_/g, " "));
+        }
+      };
+
+      const channel = supabase
+        .channel(`submission-${submissionId}`)
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "submissions", filter: `id=eq.${submissionId}` },
+          (payload) => {
+            const row = payload.new as {
+              status: string;
+              passed_count: number | null;
+              total_count: number | null;
+              runtime_ms: number | null;
+              memory_kb: number | null;
+              error_message: string | null;
+            };
+            if (TERMINAL.has(row.status)) {
+              finalize(row);
+              supabase.removeChannel(channel);
+              clearInterval(pollId);
+              clearTimeout(timeoutId);
+              resolve();
+            }
+          },
+        )
+        .subscribe();
+
+      // Backup poll every 3s in case the realtime event is missed
+      const pollId = setInterval(async () => {
+        const { data: row } = await supabase
+          .from("submissions")
+          .select("status, passed_count, total_count, runtime_ms, memory_kb, error_message")
+          .eq("id", submissionId)
+          .maybeSingle();
+        if (row && TERMINAL.has(row.status)) {
+          finalize(row);
+          supabase.removeChannel(channel);
+          clearInterval(pollId);
+          clearTimeout(timeoutId);
+          resolve();
+        }
+      }, 3000);
+
+      // Hard cap: 2 minutes
+      const timeoutId = setTimeout(() => {
+        supabase.removeChannel(channel);
+        clearInterval(pollId);
+        toast.error("Judging is taking longer than expected. Check Submissions tab shortly.");
+        resolve();
+      }, 120_000);
+    });
 
   const runCustom = async () => {
     if (!problem) return;
@@ -220,14 +323,15 @@ export default function ProblemDetail() {
     }
   };
 
+  const PENDING = new Set(["queued", "pending", "running"]);
   const statusColor = (s: string) => {
     if (s === "accepted") return "text-success";
-    if (s === "pending" || s === "running") return "text-muted-foreground";
+    if (PENDING.has(s)) return "text-muted-foreground";
     return "text-destructive";
   };
   const StatusIcon = ({ s }: { s: string }) =>
     s === "accepted" ? <CheckCircle2 className="h-4 w-4 text-success" /> :
-    s === "pending" || s === "running" ? <Clock className="h-4 w-4 text-muted-foreground" /> :
+    PENDING.has(s) ? <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" /> :
     <XCircle className="h-4 w-4 text-destructive" />;
 
   const langs: Lang[] = useMemo(() => (problem ? (Object.keys(problem.starter_code) as Lang[]) : ["python"]), [problem]);

@@ -481,6 +481,60 @@ export type Database = {
         }
         Relationships: []
       }
+      submission_jobs: {
+        Row: {
+          attempts: number
+          code: string
+          contest_id: string | null
+          created_at: string
+          id: string
+          language: string
+          last_error: string | null
+          locked_until: string | null
+          max_attempts: number
+          next_run_at: string
+          problem_id: string
+          status: Database["public"]["Enums"]["job_status"]
+          submission_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempts?: number
+          code: string
+          contest_id?: string | null
+          created_at?: string
+          id?: string
+          language: string
+          last_error?: string | null
+          locked_until?: string | null
+          max_attempts?: number
+          next_run_at?: string
+          problem_id: string
+          status?: Database["public"]["Enums"]["job_status"]
+          submission_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempts?: number
+          code?: string
+          contest_id?: string | null
+          created_at?: string
+          id?: string
+          language?: string
+          last_error?: string | null
+          locked_until?: string | null
+          max_attempts?: number
+          next_run_at?: string
+          problem_id?: string
+          status?: Database["public"]["Enums"]["job_status"]
+          submission_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       submissions: {
         Row: {
           code: string
@@ -661,6 +715,36 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_submission_jobs: {
+        Args: { _limit: number; _lock_seconds?: number }
+        Returns: {
+          attempts: number
+          code: string
+          contest_id: string | null
+          created_at: string
+          id: string
+          language: string
+          last_error: string | null
+          locked_until: string | null
+          max_attempts: number
+          next_run_at: string
+          problem_id: string
+          status: Database["public"]["Enums"]["job_status"]
+          submission_id: string | null
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "submission_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      count_recent_submission_jobs: {
+        Args: { _user_id: string; _within_seconds: number }
+        Returns: number
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -673,9 +757,11 @@ export type Database = {
       app_role: "admin" | "user"
       code_language: "cpp" | "java" | "python" | "javascript"
       difficulty: "easy" | "medium" | "hard"
+      job_status: "queued" | "running" | "done" | "failed"
       plagiarism_status: "pending" | "dismissed" | "confirmed"
       problem_status: "pending" | "approved" | "rejected"
       submission_status:
+        | "queued"
         | "pending"
         | "running"
         | "accepted"
@@ -815,9 +901,11 @@ export const Constants = {
       app_role: ["admin", "user"],
       code_language: ["cpp", "java", "python", "javascript"],
       difficulty: ["easy", "medium", "hard"],
+      job_status: ["queued", "running", "done", "failed"],
       plagiarism_status: ["pending", "dismissed", "confirmed"],
       problem_status: ["pending", "approved", "rejected"],
       submission_status: [
+        "queued",
         "pending",
         "running",
         "accepted",
