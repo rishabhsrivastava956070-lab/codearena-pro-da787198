@@ -323,14 +323,15 @@ export default function ProblemDetail() {
     }
   };
 
+  const PENDING = new Set(["queued", "pending", "running"]);
   const statusColor = (s: string) => {
     if (s === "accepted") return "text-success";
-    if (s === "pending" || s === "running") return "text-muted-foreground";
+    if (PENDING.has(s)) return "text-muted-foreground";
     return "text-destructive";
   };
   const StatusIcon = ({ s }: { s: string }) =>
     s === "accepted" ? <CheckCircle2 className="h-4 w-4 text-success" /> :
-    s === "pending" || s === "running" ? <Clock className="h-4 w-4 text-muted-foreground" /> :
+    PENDING.has(s) ? <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" /> :
     <XCircle className="h-4 w-4 text-destructive" />;
 
   const langs: Lang[] = useMemo(() => (problem ? (Object.keys(problem.starter_code) as Lang[]) : ["python"]), [problem]);
