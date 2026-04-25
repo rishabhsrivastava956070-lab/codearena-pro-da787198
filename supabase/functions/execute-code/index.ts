@@ -8,6 +8,10 @@ const corsHeaders = {
 const JUDGE0_BASE = "https://ce.judge0.com";
 const LANG_ID: Record<string, number> = { cpp: 54, java: 62, python: 71, javascript: 63 };
 
+// Rate limit: max N submit jobs per user per window
+const SUBMIT_RATE_LIMIT = 5;
+const SUBMIT_RATE_WINDOW_SEC = 10;
+
 type SubmitBody = {
   problem_id: string;
   language: string;
@@ -125,6 +129,64 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const { data: prob } = await admin.from("problems").select("id, time_limit_ms, memory_limit_mb").eq("id", body.problem_id).maybeSingle();
     if (!prob) throw new Error("Problem not found");
+
+    // ----- SUBMIT mode: enqueue and return immediately -----
+    if (body.mode === "submit" && user) {
+      // Per-user rate limit
+      const { data: recent, error: rlErr } = await admin.rpc("count_recent_submission_jobs", {
+        _user_id: user.id,
+        _within_seconds: SUBMIT_RATE_WINDOW_SEC,
+      });
+      if (rlErr) throw rlErr;
+      if ((recent ?? 0) >= SUBMIT_RATE_LIMIT) {
+        return new Response(
+          JSON.stringify({
+            error: "rate_limited",
+            message: `Too many submissions. Wait a few seconds (max ${SUBMIT_RATE_LIMIT} per ${SUBMIT_RATE_WINDOW_SEC}s).`,
+          }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      // Create the submission row up-front in 'queued' state so the user can watch it via realtime
+      const { data: subRow, error: subErr } = await admin
+        .from("submissions")
+        .insert({
+          user_id: user.id,
+          problem_id: body.problem_id,
+          contest_id: body.contest_id ?? null,
+          language: body.language,
+          code: body.code,
+          status: "queued",
+        })
+        .select("id")
+        .maybeSingle();
+      if (subErr || !subRow) throw new Error(subErr?.message || "Failed to create submission");
+
+      const { error: jobErr } = await admin.from("submission_jobs").insert({
+        user_id: user.id,
+        submission_id: subRow.id,
+        problem_id: body.problem_id,
+        contest_id: body.contest_id ?? null,
+        language: body.language,
+        code: body.code,
+      });
+      if (jobErr) throw jobErr;
+
+      // Best-effort kick the worker so the user doesn't wait for the cron tick
+      try {
+        await fetch(`${SUPABASE_URL}/functions/v1/judge-worker`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_SERVICE_KEY}` },
+          body: "{}",
+        });
+      } catch (_) {/* ignore — cron will pick it up */}
+
+      return new Response(
+        JSON.stringify({ status: "queued", submission_id: subRow.id }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // ----- CUSTOM mode: run once against user-provided stdin, no DB writes -----
     if (body.mode === "custom") {
