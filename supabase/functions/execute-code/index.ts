@@ -8,7 +8,7 @@ const corsHeaders = {
 const JUDGE0_BASE = "https://ce.judge0.com";
 const LANG_ID: Record<string, number> = { cpp: 54, java: 62, python: 71, javascript: 63 };
 
-type SubmitBody = { problem_id: string; language: string; code: string; mode: "run" | "submit" };
+type SubmitBody = { problem_id: string; language: string; code: string; mode: "run" | "submit"; contest_id?: string };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -115,10 +115,36 @@ Deno.serve(async (req) => {
     const passedCount = results.filter((r) => r.passed).length;
     const totalCount = body.mode === "run" ? testCases.length : (cases?.length ?? testCases.length);
 
+    // Validate contest window server-side: only count submission for contest if within window
+    let validContestId: string | null = null;
+    if (body.mode === "submit" && body.contest_id && user) {
+      const { data: c } = await admin
+        .from("contests")
+        .select("id, start_time, end_time")
+        .eq("id", body.contest_id)
+        .maybeSingle();
+      if (c) {
+        const now = Date.now();
+        const start = new Date(c.start_time).getTime();
+        const end = new Date(c.end_time).getTime();
+        if (now >= start && now <= end) {
+          // Also verify the problem belongs to the contest
+          const { data: cp } = await admin
+            .from("contest_problems")
+            .select("contest_id")
+            .eq("contest_id", c.id)
+            .eq("problem_id", body.problem_id)
+            .maybeSingle();
+          if (cp) validContestId = c.id;
+        }
+      }
+    }
+
     if (body.mode === "submit" && user) {
       await admin.from("submissions").insert({
         user_id: user.id,
         problem_id: body.problem_id,
+        contest_id: validContestId,
         language: body.language,
         code: body.code,
         status: overall,
