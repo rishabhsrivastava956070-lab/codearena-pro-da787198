@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
     }
 
     if (body.mode === "submit" && user) {
-      await admin.from("submissions").insert({
+      const { data: subRow } = await admin.from("submissions").insert({
         user_id: user.id,
         problem_id: body.problem_id,
         contest_id: validContestId,
@@ -238,7 +238,19 @@ Deno.serve(async (req) => {
         total_count: totalCount,
         error_message: firstError,
         score: overall === "accepted" ? 100 : Math.floor((passedCount / Math.max(1, totalCount)) * 100),
-      });
+      }).select("id").maybeSingle();
+
+      // Run plagiarism check for accepted submissions only
+      if (overall === "accepted" && subRow?.id) {
+        await runPlagiarismCheck(admin, {
+          submission_id: subRow.id,
+          user_id: user.id,
+          problem_id: body.problem_id,
+          contest_id: validContestId,
+          language: body.language,
+          code: body.code,
+        });
+      }
 
       if (overall === "accepted") {
         const { data: prev } = await admin
