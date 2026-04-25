@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Loader2, Play, Send, Sparkles, CheckCircle2, XCircle, Clock, Trophy } from "lucide-react";
+import { Loader2, Play, Send, Sparkles, CheckCircle2, XCircle, Clock, Trophy, FlaskConical, History as HistoryIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { DifficultyBadge } from "@/components/problems/DifficultyBadge";
 import {
   Select,
@@ -18,6 +19,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CodeEditor, type Lang } from "@/components/editor/CodeEditor";
+import { useCodeAutosave, loadDraft } from "@/hooks/useCodeAutosave";
+import { VersionHistoryPanel } from "@/components/problems/VersionHistoryPanel";
 import { toast } from "sonner";
 
 type Problem = {
@@ -54,6 +57,13 @@ type RunResult = {
   error_message?: string;
   cases?: { input: string; expected: string; got: string; passed: boolean; status: string }[];
 };
+type CustomResult = {
+  status: string;
+  stdout: string;
+  stderr: string;
+  runtime_ms: number;
+  memory_kb: number;
+};
 
 export default function ProblemDetail() {
   const { slug } = useParams<{ slug: string }>();
@@ -71,6 +81,11 @@ export default function ProblemDetail() {
   const [aiFeedback, setAiFeedback] = useState<string>("");
   const [result, setResult] = useState<RunResult | null>(null);
   const [history, setHistory] = useState<Submission[]>([]);
+  // Custom test panel state
+  const [customStdin, setCustomStdin] = useState<string>("");
+  const [customResult, setCustomResult] = useState<CustomResult | null>(null);
+  const [customRunning, setCustomRunning] = useState(false);
+  const [outputTab, setOutputTab] = useState<string>("result");
 
   useEffect(() => {
     if (!slug) return;
@@ -95,14 +110,27 @@ export default function ProblemDetail() {
 
   useEffect(() => {
     if (problem && (problem.starter_code as Record<string, string>)?.[language] !== undefined) {
-      const saved = localStorage.getItem(`code:${problem.id}:${language}`);
-      setCode(saved ?? (problem.starter_code as Record<string, string>)[language] ?? "");
+      // Prefer cloud draft (when signed in), else localStorage fallback, else starter code.
+      (async () => {
+        if (user) {
+          const draft = await loadDraft(user.id, problem.id, language);
+          if (draft?.code) {
+            setCode(draft.code);
+            return;
+          }
+        }
+        const saved = localStorage.getItem(`code:${problem.id}:${language}`);
+        setCode(saved ?? (problem.starter_code as Record<string, string>)[language] ?? "");
+      })();
     }
-  }, [language, problem]);
+  }, [language, problem, user]);
 
   useEffect(() => {
     if (problem && code) localStorage.setItem(`code:${problem.id}:${language}`, code);
   }, [code, language, problem]);
+
+  // Cloud autosave (debounced) for signed-in users
+  useCodeAutosave({ userId: user?.id, problemId: problem?.id, language, code });
 
   useEffect(() => {
     if (!problem || !user) return;
@@ -155,10 +183,29 @@ export default function ProblemDetail() {
     }
   };
 
+  const runCustom = async () => {
+    if (!problem) return;
+    setCustomRunning(true);
+    setCustomResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("execute-code", {
+        body: { problem_id: problem.id, language, code, mode: "custom", stdin: customStdin },
+      });
+      if (error) throw error;
+      setCustomResult(data as CustomResult);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Execution failed";
+      toast.error(msg);
+    } finally {
+      setCustomRunning(false);
+    }
+  };
+
   const aiReview = async () => {
     if (!problem) return;
     setAiReviewing(true);
     setAiFeedback("");
+    setOutputTab("ai");
     try {
       const { data, error } = await supabase.functions.invoke("ai-code-review", {
         body: { problem_title: problem.title, problem_description: problem.description, language, code },
