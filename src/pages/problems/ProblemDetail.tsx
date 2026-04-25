@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Loader2, Play, Send, Sparkles, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Loader2, Play, Send, Sparkles, CheckCircle2, XCircle, Clock, Trophy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,8 @@ type RunResult = {
 
 export default function ProblemDetail() {
   const { slug } = useParams<{ slug: string }>();
+  const [searchParams] = useSearchParams();
+  const contestId = searchParams.get("contest"); // present when entering from a live contest
   const { user } = useAuth();
   const navigate = useNavigate();
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -127,7 +129,14 @@ export default function ProblemDetail() {
     setResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("execute-code", {
-        body: { problem_id: problem.id, language, code, mode },
+        body: {
+          problem_id: problem.id,
+          language,
+          code,
+          mode,
+          // Server validates the window; we just pass the hint.
+          ...(mode === "submit" && contestId ? { contest_id: contestId } : {}),
+        },
       });
       if (error) throw error;
       setResult(data as RunResult);
@@ -182,6 +191,12 @@ export default function ProblemDetail() {
 
   return (
     <div className="container py-4 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-[calc(100vh-3.5rem)]">
+      {contestId && (
+        <div className="lg:col-span-2 -mb-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 flex items-center gap-2 text-sm text-primary">
+          <Trophy className="h-4 w-4" />
+          Contest mode — submissions count toward the live leaderboard.
+        </div>
+      )}
       {/* LEFT: description */}
       <div className="flex flex-col min-h-0">
         <Card className="flex-1 overflow-hidden flex flex-col">
